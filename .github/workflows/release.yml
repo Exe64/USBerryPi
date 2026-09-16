@@ -9,13 +9,13 @@ jobs:
   deb:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: make test
       - run: make deb VERSION=${GITHUB_REF_NAME#v}
         if: startsWith(github.ref, 'refs/tags/v')
       - run: make deb VERSION=0.0.0~${GITHUB_SHA::7}
         if: "!startsWith(github.ref, 'refs/tags/v')"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: deb, path: build/*.deb }
 
   image:
@@ -27,12 +27,12 @@ jobs:
           - { arch: armhf, branch: master }  # Pi 1 à Pi 5
           - { arch: arm64, branch: arm64 }   # Pi 3 à Pi 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with: { name: deb }
       - name: Libérer de l'espace disque
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-qemu-action@v4
       - name: Construire l'image
         run: |
           git clone --depth 1 -b ${{ matrix.branch }} https://github.com/RPi-Distro/pi-gen
@@ -42,7 +42,7 @@ jobs:
           cp image/config pi-gen/config
           echo "IMG_NAME=usb-over-ip-${{ matrix.arch }}" >> pi-gen/config
           cd pi-gen && ./build-docker.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: image-${{ matrix.arch }}
           path: pi-gen/deploy/*.img.xz
@@ -54,7 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions: { contents: write }
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { merge-multiple: true }
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with: { files: "*", generate_release_notes: true }
