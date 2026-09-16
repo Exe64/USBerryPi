@@ -1,0 +1,13 @@
+[Unit]
+Description=Interface web usb-over-ip
+After=network.target
+
+[Service]
+ExecStart=/usr/lib/usb-over-ip/uoip.py serve 80
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

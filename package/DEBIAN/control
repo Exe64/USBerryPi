@@ -1,0 +1,11 @@
+Package: usb-over-ip
+Version: @VERSION@
+Architecture: all
+Maintainer: Julien Dumur <julien.dumur@gmail.com>
+Depends: python3 (>= 3.9), usbip, ser2net (>= 4), systemd, udev, kmod, hostname
+Section: net
+Priority: optional
+Description: partage USB/IP et série (ser2net) avec interface web
+ Partage automatiquement les périphériques USB branchés via USB/IP (tcp/3240),
+ expose des ports série en TCP via ser2net et fournit une interface web
+ d'administration sur le port 80. Fonctionne du Raspberry Pi 1 au Pi 5.

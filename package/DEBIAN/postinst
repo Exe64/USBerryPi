@@ -1,0 +1,19 @@
+#!/bin/sh
+set -e
+[ "$1" = configure ] || exit 0
+
+# Anciens scripts install_server : même port 3240 et règle udev concurrente.
+if [ -f /etc/systemd/system/usbipd.service ]; then
+  systemctl disable --now usbipd.service 2>/dev/null || true
+  rm -f /etc/systemd/system/usbipd.service /etc/udev/rules/90-usbip-autobind.rules /usr/local/sbin/usbip-autobind
+  echo "usb-over-ip : ancienne installation install_server remplacée"
+fi
+/usr/lib/usb-over-ip/uoip.py init
+
+systemctl enable usb-over-ip.service usb-over-ip-web.service ser2net.service
+# Dans un chroot (construction d'image) systemd ne tourne pas : tout démarrera au boot.
+if [ -d /run/systemd/system ]; then
+  systemctl daemon-reload
+  udevadm control --reload-rules || true
+  systemctl restart usb-over-ip.service usb-over-ip-web.service ser2net.service
+fi

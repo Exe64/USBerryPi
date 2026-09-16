@@ -1,0 +1,52 @@
+#!/bin/sh
+# Serveur USB/IP pour Raspberry Pi : partage automatiquement TOUS les périphériques USB branchés.
+# Remplace VirtualHere par la pile USB/IP du noyau Linux (libre, aucune limite de ports).
+set -e
+[ "$(id -u)" -eq 0 ] || { echo "Please run with sudo"; exit 1; }
+
+apt-get update && apt-get install -y usbip
+
+# Modules chargés au boot
+echo usbip_host > /etc/modules-load.d/usbip.conf
+modprobe usbip_host
+
+# VID:PID à NE JAMAIS partager. Sur Pi 3/3B+ l'Ethernet est en USB : le partager coupe le réseau.
+mkdir -p /usr/local/etc/usbip
+[ -f /usr/local/etc/usbip/exclude ] || printf '0424:ec00\n0424:7800\n' > /usr/local/etc/usbip/exclude
+
+cat > /usr/local/sbin/usbip-autobind << 'EOF'
+#!/bin/sh
+# $1 = busid (ex: 1-1.2). Ignore les hubs et les périphériques exclus.
+d=/sys/bus/usb/devices/$1
+[ -f "$d/idVendor" ] || exit 0
+[ "$(cat $d/bDeviceClass)" = "09" ] && exit 0
+grep -qix "$(cat $d/idVendor):$(cat $d/idProduct)" /usr/local/etc/usbip/exclude && exit 0
+usbip bind -b "$1" >/dev/null 2>&1 || true
+EOF
+chmod +x /usr/local/sbin/usbip-autobind
+
+# Branchement à chaud
+echo 'ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", RUN+="/usr/local/sbin/usbip-autobind %k"' \
+  > /etc/udev/rules/90-usbip-autobind.rules
+udevadm control --reload-rules
+
+cat > /etc/systemd/system/usbipd.service << 'EOF'
+[Unit]
+Description=USB/IP server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStartPre=/sbin/modprobe usbip_host
+ExecStart=/usr/sbin/usbipd
+# Périphériques déjà branchés au démarrage
+ExecStartPost=/bin/sh -c 'sleep 1; for b in $(ls /sys/bus/usb/devices | grep -v -e : -e ^usb); do /usr/local/sbin/usbip-autobind $b; done'
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable --now usbipd.service
+echo "OK - port TCP 3240. Périphériques partagés :"
+usbip list -l

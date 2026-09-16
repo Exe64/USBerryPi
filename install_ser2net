@@ -1,0 +1,43 @@
+#!/bin/sh
+# Expose le dongle Zigbee et le module TIC en TCP pour Home Assistant (ser2net).
+# Usage : sudo ./install_ser2net /dev/serial/by-id/<zigbee> /dev/serial/by-id/<tic> [1200|9600]
+#   1200 = TIC mode historique (défaut), 9600 = TIC mode standard
+set -e
+[ "$(id -u)" -eq 0 ] || { echo "Please run with sudo"; exit 1; }
+[ -e "$1" ] && [ -e "$2" ] || { echo "Usage: $0 <zigbee-tty> <tic-tty> [1200|9600]"; ls /dev/serial/by-id/ 2>/dev/null; exit 1; }
+ZIGBEE=$1 TIC=$2 TIC_BAUD=${3:-1200}
+
+apt-get update && apt-get install -y ser2net
+
+cat > /etc/ser2net.yaml << EOF
+%YAML 1.1
+---
+connection: &zigbee
+  accepter: tcp,6638
+  enable: on
+  options:
+    kickolduser: true
+  connector: serialdev,$ZIGBEE,115200n81,local,nobreak
+
+connection: &tic
+  accepter: tcp,6639
+  enable: on
+  options:
+    kickolduser: true
+  connector: serialdev,$TIC,${TIC_BAUD}e71,local
+EOF
+
+# Si le serveur USB/IP est installé, l'empêcher de capturer ces deux périphériques
+if [ -f /usr/local/etc/usbip/exclude ]; then
+  for t in "$ZIGBEE" "$TIC"; do
+    busid=$(udevadm info -q path -n "$t" | grep -o '/[0-9]*-[0-9.]*:' | head -1 | tr -d '/:')
+    d=/sys/bus/usb/devices/$busid
+    echo "$(cat $d/idVendor):$(cat $d/idProduct)" >> /usr/local/etc/usbip/exclude
+    usbip unbind -b "$busid" 2>/dev/null || true
+  done
+  sort -u -o /usr/local/etc/usbip/exclude /usr/local/etc/usbip/exclude
+fi
+
+systemctl enable ser2net
+systemctl restart ser2net
+echo "OK - Zigbee: tcp/6638  TIC: tcp/6639 (${TIC_BAUD} 7E1)"

@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>USB over IP</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔌</text></svg>">
+<style>
+:root { --bg:#f6f7f9; --card:#fff; --fg:#1b1f24; --muted:#667085; --line:#e4e7ec; --accent:#2563eb; --ok:#15803d; --warn:#b45309; --bad:#b91c1c; }
+@media (prefers-color-scheme: dark) { :root { --bg:#0f1115; --card:#171a21; --fg:#e6e8eb; --muted:#9aa3af; --line:#2a2f3a; --accent:#60a5fa; --ok:#4ade80; --warn:#fbbf24; --bad:#f87171; } }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, sans-serif; }
+header { padding:16px; border-bottom:1px solid var(--line); background:var(--card); display:flex; flex-wrap:wrap; gap:8px 24px; align-items:baseline; }
+header h1 { margin:0; font-size:18px; }
+main { max-width:1100px; margin:auto; padding:16px; display:grid; gap:16px; }
+section { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:16px; overflow-x:auto; }
+h2 { margin:0 0 12px; font-size:15px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+h2 .sp { flex:1; }
+table { width:100%; border-collapse:collapse; }
+th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+th { color:var(--muted); font-weight:500; font-size:12px; }
+.muted { color:var(--muted); font-size:12px; }
+.mono { font-family:ui-monospace, monospace; font-size:12px; }
+.pill { display:inline-block; padding:1px 8px; border-radius:99px; font-size:12px; border:1px solid currentColor; white-space:nowrap; }
+.ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); } .off { color:var(--muted); }
+button, input, select { font:inherit; color:inherit; background:var(--card); border:1px solid var(--line); border-radius:6px; padding:4px 10px; }
+button { cursor:pointer; } button:hover { border-color:var(--accent); }
+button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+button.danger { color:var(--bad); }
+input, select { min-width:0; }
+.grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:8px 16px; }
+.row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+pre { max-height:400px; overflow:auto; font-size:12px; background:var(--bg); padding:8px; border-radius:6px; white-space:pre-wrap; }
+#toast { position:fixed; bottom:16px; left:16px; right:16px; max-width:600px; margin:auto; padding:10px 14px; border-radius:8px; background:var(--fg); color:var(--bg); display:none; white-space:pre-wrap; }
+</style>
+</head>
+<body>
+<header><h1>🔌 USB over IP</h1><span id="host" class="muted"></span></header>
+<main id="app"><section>Chargement…</section></main>
+<div id="toast" role="status"></div>
+<script>
+const $ = s => document.querySelector(s);
+const esc = v => String(v ?? "").replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
+const fmtLabel = f => f[1] + f[0].toUpperCase() + f[2];  // "n81" -> "8N1"
+let S = null, serialDraft = null, busy = false;
+
+function toast(msg, bad) {
+  const t = $("#toast"); t.textContent = msg; t.style.background = bad ? "var(--bad)" : "";
+  t.style.display = "block"; clearTimeout(t.timer); t.timer = setTimeout(() => t.style.display = "none", bad ? 8000 : 3000);
+}
+
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const ct = r.headers.get("Content-Type") || "";
+  const data = ct.startsWith("application/json") ? await r.json() : await r.text();
+  if (!r.ok) throw new Error(data.error || r.statusText);
+  return data;
+}
+
+async function act(path, body, msg) {
+  if (busy) return; busy = true;
+  try {
+    const r = await api(path, body);
+    if (r.ok === false) toast(r.output || "Échec", true); else toast(msg || "OK");
+  } catch (e) { toast(e.message, true); }
+  busy = false; refresh();
+}
+
+const uptime = s => `${Math.floor(s / 86400)} j ${Math.floor(s % 86400 / 3600)} h ${Math.floor(s % 3600 / 60)} min`;
+const svc = st => `<span class="pill ${st === "active" ? "ok" : st === "inactive" ? "off" : "bad"}">${esc(st)}</span>`;
+
+function status(d) {
+  if (d.used) return `<span class="pill warn">utilisé par un client</span>`;
+  if (d.bound) return `<span class="pill ok">partagé</span>`;
+  if (d.blocked === "hub") return `<span class="pill off">hub</span>`;
+  if (d.blocked === "exclu") return `<span class="pill off">exclu</span>`;
+  if (d.blocked === "ser2net") return `<span class="pill ok">ser2net</span>`;
+  return `<span class="pill off">local</span>`;
+}
+
+function deviceActions(d) {
+  if (d.hub) return "";
+  const b = (a, label, cls = "") => `<button class="${cls}" data-dev="${esc(d.busid)}" data-act="${a}">${label}</button>`;
+  const out = [];
+  if (d.bound) out.push(b("unbind", d.used ? "Déconnecter" : "Ne plus partager", d.used ? "danger" : ""));
+  else if (!d.blocked) out.push(b("bind", "Partager"));
+  out.push(d.blocked === "exclu" ? b("include", "Retirer l'exclusion") : d.blocked ? "" : b("exclude", "Exclure"));
+  return `<div class="row">${out.join("")}</div>`;
+}
+
+function render() {
+  const s = S.system;
+  $("#host").innerHTML = `${esc(s.hostname)} · ${esc(s.ips.join(", "))}`;
+  const mem = s.mem_total ? `${Math.round((s.mem_total - s.mem_available) / 1024)} / ${Math.round(s.mem_total / 1024)} Mo` : "?";
+  const serial = serialDraft || S.serial;
+  const ttyOptions = cur => [...new Set([...S.ttys, cur].filter(Boolean))].map(t => `<option ${t === cur ? "selected" : ""}>${esc(t)}</option>`).join("");
+
+  $("#app").innerHTML = `
+  <section>
+    <h2>Système</h2>
+    <div class="grid">
+      <div><div class="muted">Modèle</div>${esc(s.model || "?")}</div>
+      <div><div class="muted">Noyau</div>${esc(s.kernel)}</div>
+      <div><div class="muted">Uptime</div>${uptime(s.uptime)}</div>
+      <div><div class="muted">Charge / Temp.</div>${s.load}${s.temp != null ? ` · ${s.temp} °C` : ""}</div>
+      <div><div class="muted">Mémoire</div>${mem}</div>
+      <div><div class="muted">Module usbip_host</div>${s.usbip_module ? svc("active") : svc("absent")}</div>
+      <div><div class="muted">Serveur USB/IP (tcp/3240)</div><div class="row">${svc(s.services["usb-over-ip"])} <button data-svc="usb-over-ip">Redémarrer</button></div></div>
+      <div><div class="muted">ser2net</div><div class="row">${svc(s.services.ser2net)} <button data-svc="ser2net">Redémarrer</button></div></div>
+    </div>
+    <p class="muted">Clients USB/IP connectés : ${S.clients.length ? S.clients.map(c => `<span class="mono">${esc(c)}</span>`).join(", ") : "aucun"}</p>
+  </section>
+
+  <section>
+    <h2>Périphériques USB <span class="muted">${S.devices.filter(d => d.bound).length} partagé(s) · côté client : <span class="mono">usbip list -r ${esc(s.ips[0] || s.hostname)}</span></span></h2>
+    <table>
+      <tr><th>Bus</th><th>Périphérique</th><th>ID</th><th>Détails</th><th>État</th><th></th></tr>
+      ${S.devices.map(d => `<tr>
+        <td class="mono">${esc(d.busid)}</td>
+        <td><b>${esc(d.product || "(sans nom)")}</b><div class="muted">${esc(d.manufacturer)}</div></td>
+        <td class="mono">${esc(d.vid)}:${esc(d.pid)}${d.serial ? `<div class="muted">SN ${esc(d.serial)}</div>` : ""}</td>
+        <td class="muted">${esc(d.class)} · USB ${esc(d.version)} · ${esc(d.speed)} Mb/s · ${esc(d.power)}
+          ${d.interfaces.length ? `<div>${d.interfaces.map(i => esc(i.class) + (i.driver ? ` (${esc(i.driver)})` : "")).join(", ")}</div>` : ""}
+          ${d.ttys.length ? `<div class="mono">${d.ttys.map(t => "/dev/" + esc(t)).join(", ")}</div>` : ""}</td>
+        <td>${status(d)}</td>
+        <td>${deviceActions(d)}</td></tr>`).join("") || `<tr><td colspan="6" class="muted">Aucun périphérique USB.</td></tr>`}
+    </table>
+  </section>
+
+  <section>
+    <h2>Ports série en TCP (ser2net) <span class="sp"></span>
+      <button id="serial-add">Ajouter</button>
+      ${serialDraft ? `<button id="serial-cancel">Annuler</button><button class="primary" id="serial-save">Appliquer</button>` : ""}</h2>
+    <table>
+      <tr><th>Nom</th><th>Port série</th><th>Port TCP</th><th>Vitesse</th><th>Format</th><th>État</th><th></th></tr>
+      ${serial.map((p, i) => `<tr data-i="${i}">
+        <td><input data-k="name" value="${esc(p.name)}" size="10"></td>
+        <td><select data-k="tty">${ttyOptions(p.tty)}</select></td>
+        <td><input data-k="port" type="number" min="1024" max="65535" value="${esc(p.port)}" style="width:6em"></td>
+        <td><select data-k="baud">${S.bauds.map(b => `<option ${b === p.baud ? "selected" : ""}>${b}</option>`).join("")}</select></td>
+        <td><select data-k="format">${S.formats.map(f => `<option value="${f}" ${f === p.format ? "selected" : ""}>${fmtLabel(f)}</option>`).join("")}</select></td>
+        <td>${serialDraft ? "" : (!p.present ? `<span class="pill bad">absent</span>` : p.clients.length ? `<span class="pill warn">${p.clients.map(esc).join(", ")}</span>` : `<span class="pill ok">en attente</span>`)}</td>
+        <td><button class="danger" data-del="${i}">Supprimer</button></td></tr>`).join("") || `<tr><td colspan="7" class="muted">Aucun port série exposé.</td></tr>`}
+    </table>
+    <p class="muted">Un périphérique exposé ici n'est jamais partagé en USB/IP. Ex. Home Assistant : <span class="mono">socket://${esc(s.ips[0] || s.hostname)}:PORT</span></p>
+  </section>
+
+  <section>
+    <h2>Exclusions USB/IP <span class="sp"></span><button class="primary" id="exclude-save">Enregistrer</button></h2>
+    <p class="muted">Un <span class="mono">vid:pid</span> ou <span class="mono">vid:pid:numéro_de_série</span> par ligne. Par défaut : Ethernet USB des Pi 1/2/3 (le partager coupe le réseau).</p>
+    <textarea id="exclude" rows="5" class="mono" style="width:100%;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:8px">${esc(S.exclude.join("\n"))}</textarea>
+  </section>
+
+  <section>
+    <h2>Administration</h2>
+    <div class="row">
+      <input id="pw" type="password" placeholder="Nouveau mot de passe" autocomplete="new-password">
+      <button id="pw-save">Changer le mot de passe</button>
+      <span class="sp" style="flex:1"></span>
+      <button id="logs-btn">Journaux</button>
+      <button class="danger" id="reboot">Redémarrer le système</button>
+    </div>
+    <pre id="logs" hidden></pre>
+  </section>`;
+}
+
+function renderSetup() {
+  $("#app").innerHTML = `<section style="max-width:420px;margin:auto">
+    <h2>Première connexion</h2>
+    <p>Choisissez le mot de passe de l'interface (identifiant libre à la connexion).</p>
+    <div class="row"><input id="pw" type="password" placeholder="Mot de passe (8+ caractères)" autocomplete="new-password" style="flex:1"><button class="primary" id="pw-save">Valider</button></div>
+  </section>`;
+}
+
+function readSerialForm() {
+  return [...document.querySelectorAll("tr[data-i]")].map(tr => {
+    const v = k => tr.querySelector(`[data-k="${k}"]`).value;
+    return { name: v("name"), tty: v("tty"), port: parseInt(v("port"), 10), baud: parseInt(v("baud"), 10), format: v("format") };
+  });
+}
+
+document.addEventListener("click", async e => {
+  const t = e.target.closest("button"); if (!t) return;
+  if (t.dataset.dev) {
+    if (t.dataset.act === "unbind" && t.classList.contains("danger") && !confirm("Un client utilise ce périphérique. Le déconnecter ?")) return;
+    return act("/api/device", { busid: t.dataset.dev, action: t.dataset.act });
+  }
+  if (t.dataset.svc) return act("/api/service", { name: t.dataset.svc, action: "restart" }, `${t.dataset.svc} redémarré`);
+  if (t.dataset.del) { serialDraft = readSerialForm(); serialDraft.splice(+t.dataset.del, 1); return render(); }
+  switch (t.id) {
+    case "serial-add": {
+      serialDraft = readSerialForm();
+      const port = Math.max(6637, ...serialDraft.map(p => p.port)) + 1;
+      serialDraft.push({ name: `serie${serialDraft.length + 1}`, tty: S.ttys.find(x => x.includes("by-id")) || S.ttys[0] || "", port, baud: 115200, format: "n81" });
+      return render();
+    }
+    case "serial-cancel": serialDraft = null; return render();
+    case "serial-save": { const items = readSerialForm(); serialDraft = null; return act("/api/serial", { items }, "ser2net reconfiguré"); }
+    case "exclude-save": return act("/api/exclude", { entries: $("#exclude").value.split("\n") }, "Exclusions enregistrées");
+    case "pw-save": {
+      const password = $("#pw").value;
+      try { await api("/api/password", { password }); toast("Mot de passe enregistré, reconnectez-vous"); setTimeout(() => location.reload(), 1500); }
+      catch (err) { toast(err.message, true); }
+      return;
+    }
+    case "logs-btn": { const pre = $("#logs"); if (!(pre.hidden = !pre.hidden)) return refresh(); pre.textContent = await api("/api/logs"); pre.scrollTop = pre.scrollHeight; return; }
+    case "reboot": if (confirm("Redémarrer le système ?")) act("/api/reboot", {}, "Redémarrage…"); return;
+  }
+});
+
+// Toute modification du formulaire ser2net bascule en brouillon : le rafraîchissement auto ne l'écrase plus.
+document.addEventListener("input", e => {
+  if (e.target.closest("tr[data-i]") && !serialDraft) {
+    serialDraft = readSerialForm();
+    const h = e.target.closest("section").querySelector("h2");
+    h.insertAdjacentHTML("beforeend", `<button id="serial-cancel">Annuler</button><button class="primary" id="serial-save">Appliquer</button>`);
+  }
+});
+
+async function refresh() {
+  // Ne pas redessiner pendant une saisie (brouillon ser2net, exclusions, mot de passe, journaux ouverts).
+  const a = document.activeElement;
+  if (S && !S.setup && (serialDraft || (a && a.matches("input, textarea, select")) || !$("#logs")?.hidden)) return;
+  try {
+    S = await api("/api/state");
+    S.setup ? renderSetup() : render();
+  } catch (e) { toast(e.message, true); }
+}
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

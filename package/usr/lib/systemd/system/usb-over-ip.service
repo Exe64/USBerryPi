@@ -1,0 +1,14 @@
+[Unit]
+Description=Serveur USB/IP (usb-over-ip)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStartPre=/usr/sbin/modprobe usbip_host
+ExecStart=/usr/sbin/usbipd
+# Périphériques déjà branchés au démarrage ; les suivants passent par la règle udev
+ExecStartPost=/usr/lib/usb-over-ip/uoip.py autobind
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

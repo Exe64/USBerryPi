@@ -1,0 +1,9 @@
+#!/bin/sh
+set -e
+[ "$1" = remove ] || exit 0
+if [ -d /run/systemd/system ]; then
+  systemctl disable --now usb-over-ip-web.service usb-over-ip.service || true
+  /usr/lib/usb-over-ip/uoip.py unbind-all || true
+else
+  systemctl disable usb-over-ip-web.service usb-over-ip.service || true
+fi

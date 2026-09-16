@@ -1,0 +1,405 @@
+#!/usr/bin/python3
+"""usb-over-ip : autobind USB/IP, génération ser2net et interface web.
+
+Stdlib uniquement pour tourner tel quel du Pi 1 (ARMv6) au Pi 5.
+  uoip.py autobind [BUSID...]   partage les périphériques (tous si aucun busid)
+  uoip.py unbind-all            arrête le partage de tous les périphériques
+  uoip.py init                  crée/migre la configuration (postinst)
+  uoip.py serve [PORT]          interface web (80 par défaut)
+"""
+import base64, glob, hashlib, hmac, json, os, re, secrets, socket, subprocess, sys, threading, time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+SYS = "/sys"
+ETC = "/etc/usb-over-ip"
+HERE = os.path.dirname(os.path.abspath(__file__))
+USBIP_PORT = 3240
+BAUDS = (1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600)
+FORMATS = ("n81", "n82", "e81", "o81", "e71", "o71")  # parité, bits de données, bits de stop (syntaxe ser2net)
+CLASSES = {"00": "Composite", "01": "Audio", "02": "Communication", "03": "HID", "06": "Image", "07": "Imprimante",
+           "08": "Stockage", "09": "Hub", "0a": "CDC Data", "0b": "Carte à puce", "0e": "Vidéo", "e0": "Sans fil",
+           "ef": "Divers", "fe": "Spécifique", "ff": "Constructeur"}
+BUSID = re.compile(r"\d+-\d+(\.\d+)*")
+TTY = re.compile(r"/dev/(serial/by-id/[\w.:+@-]+|tty(USB|ACM|AMA|S)\d+)", re.A)
+IDENT = re.compile(r"[0-9a-f]{4}:[0-9a-f]{4}(:[\x21-\x7e]{1,126})?")
+NAME = re.compile(r"[A-Za-z0-9_-]{1,32}")
+SERVICES = ("usb-over-ip", "usb-over-ip-web", "ser2net")
+LOCK = threading.Lock()  # ponytail: un verrou global pour toutes les écritures, largement suffisant pour un admin
+
+
+def read(path, default=""):
+    try:
+        with open(path, errors="replace") as f:
+            return f.read().strip()
+    except OSError:
+        return default
+
+
+def write(path, text):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + ".tmp", "w") as f:
+        f.write(text)
+    os.replace(path + ".tmp", path)
+
+
+def run(*cmd):
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        return r.returncode, (r.stdout + r.stderr).strip()
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return 1, str(e)
+
+
+# ---------------------------------------------------------------- configuration
+
+def load_exclude():
+    return [l.strip().lower() for l in read(f"{ETC}/exclude").splitlines() if l.strip() and not l.startswith("#")]
+
+
+def save_exclude(entries):
+    for e in entries:
+        if not IDENT.fullmatch(e):
+            raise ValueError(f"exclusion invalide : {e!r} (attendu vid:pid ou vid:pid:numéro_de_série)")
+    write(f"{ETC}/exclude", "# VID:PID[:numéro de série] jamais partagés en USB/IP\n" +
+          "".join(e + "\n" for e in sorted(set(entries))))
+
+
+def load_serial():
+    try:
+        return json.loads(read(f"{ETC}/serial.json", "[]"))
+    except ValueError:
+        return []
+
+
+def validate_serial(items, old):
+    known = {s["tty"]: s.get("usb", "") for s in old}
+    out, names, ports = [], set(), set()
+    for it in items:
+        name, tty, port, baud, fmt = (it.get(k) for k in ("name", "tty", "port", "baud", "format"))
+        if not isinstance(name, str) or not NAME.fullmatch(name) or name in names:
+            raise ValueError(f"nom invalide ou en double : {name!r} (lettres, chiffres, _ et -)")
+        if not isinstance(tty, str) or not TTY.fullmatch(tty):
+            raise ValueError(f"port série invalide : {tty!r}")
+        if type(port) is not int or not 1024 <= port <= 65535 or port == USBIP_PORT or port in ports:
+            raise ValueError(f"port TCP invalide ou en double : {port!r} (1024-65535, hors {USBIP_PORT})")
+        if type(baud) is not int or baud not in BAUDS:
+            raise ValueError(f"vitesse invalide : {baud!r}")
+        if fmt not in FORMATS:
+            raise ValueError(f"format invalide : {fmt!r}")
+        names.add(name)
+        ports.add(port)
+        out.append({"name": name, "tty": tty, "port": port, "baud": baud, "format": fmt,
+                    "usb": tty_ident(tty) or known.get(tty, "")})
+    return out
+
+
+def ser2net_yaml(items):
+    out = "%YAML 1.1\n---\n# Généré par usb-over-ip : modifier via l'interface web\n"
+    for s in items:
+        out += (f"\nconnection: &{s['name']}\n  accepter: tcp,{s['port']}\n  enable: on\n"
+                f"  options:\n    kickolduser: true\n"
+                f"  connector: serialdev,{s['tty']},{s['baud']}{s['format']},local,nobreak\n")
+    return out
+
+
+def save_serial(items):
+    items = validate_serial(items, load_serial())
+    write(f"{ETC}/serial.json", json.dumps(items, indent=2))
+    write(f"{ETC}/ser2net.yaml", ser2net_yaml(items))
+    return items
+
+
+# ---------------------------------------------------------------- sysfs / réseau
+
+def ident(d):
+    vid, pid, serial = (read(f"{d}/{k}") for k in ("idVendor", "idProduct", "serial"))
+    return f"{vid}:{pid}:{serial}".lower() if serial else f"{vid}:{pid}".lower()
+
+
+def tty_ident(tty):
+    """Identité USB (vid:pid[:série]) du périphérique qui porte ce tty, '' si introuvable."""
+    d = os.path.realpath(f"{SYS}/class/tty/{os.path.basename(os.path.realpath(tty))}/device")
+    while d != "/" and not os.path.exists(f"{d}/idVendor"):
+        d = os.path.dirname(d)
+    return ident(d) if d != "/" else ""
+
+
+def device(busid):
+    d = f"{SYS}/bus/usb/devices/{busid}"
+    ifaces = sorted(glob.glob(f"{d}:*"))
+    ttys = sorted({os.path.basename(p) for i in ifaces for p in glob.glob(f"{i}/tty*") + glob.glob(f"{i}/tty/tty*")} - {"tty"})
+    drv = os.path.basename(os.path.realpath(f"{d}/driver")) if os.path.exists(f"{d}/driver") else ""
+    cls = read(f"{d}/bDeviceClass", "00")
+    return {
+        "busid": busid, "vid": read(f"{d}/idVendor"), "pid": read(f"{d}/idProduct"), "ident": ident(d),
+        "manufacturer": read(f"{d}/manufacturer"), "product": read(f"{d}/product"), "serial": read(f"{d}/serial"),
+        "speed": read(f"{d}/speed"), "version": read(f"{d}/version"), "power": read(f"{d}/bMaxPower"),
+        "class": CLASSES.get(cls, cls), "hub": cls == "09", "driver": drv, "bound": drv == "usbip-host",
+        "used": read(f"{SYS}/bus/usb/drivers/usbip-host/{busid}/usbip_status") == "2",
+        "interfaces": [{"class": CLASSES.get(read(f"{i}/bInterfaceClass"), read(f"{i}/bInterfaceClass")),
+                        "driver": os.path.basename(os.path.realpath(f"{i}/driver")) if os.path.exists(f"{i}/driver") else ""}
+                       for i in ifaces],
+        "ttys": ttys,
+    }
+
+
+def devices():
+    try:
+        names = os.listdir(f"{SYS}/bus/usb/devices")
+    except OSError:
+        return []
+    busids = [b for b in names if BUSID.fullmatch(b)]
+    return [device(b) for b in sorted(busids, key=lambda b: [int(x) for x in re.split(r"[-.]", b)])]
+
+
+def blocked(dev, exclude, serial):
+    """Pourquoi ce périphérique ne doit pas être partagé ('' s'il peut l'être)."""
+    if dev["hub"]:
+        return "hub"
+    keys = {f"{dev['vid']}:{dev['pid']}".lower(), dev["ident"]}
+    if keys & set(exclude):
+        return "exclu"
+    if keys & {s.get("usb") for s in serial}:
+        return "ser2net"
+    return ""
+
+
+def autobind(busids=None):
+    exclude, serial = load_exclude(), load_serial()
+    for dev in devices():
+        if (busids is None or dev["busid"] in busids) and not dev["bound"] and not blocked(dev, exclude, serial):
+            print(dev["busid"], run("usbip", "bind", "-b", dev["busid"])[1])
+
+
+def unbind(only_blocked=False):
+    exclude, serial = load_exclude(), load_serial()
+    for dev in devices():
+        if dev["bound"] and (not only_blocked or blocked(dev, exclude, serial)):
+            print(dev["busid"], run("usbip", "unbind", "-b", dev["busid"])[1])
+
+
+def hexip(h):
+    if len(h) == 8:
+        return socket.inet_ntoa(bytes.fromhex(h)[::-1])
+    ip = socket.inet_ntop(socket.AF_INET6, b"".join(bytes.fromhex(h[i:i + 8])[::-1] for i in range(0, 32, 8)))
+    return ip.removeprefix("::ffff:")
+
+
+def peers(port, proc="/proc/net"):
+    """Adresses IP des clients TCP établis sur un port local."""
+    out = set()
+    for f in ("tcp", "tcp6"):
+        for line in read(f"{proc}/{f}").splitlines()[1:]:
+            _, loc, rem, state = line.split()[:4]
+            if state == "01" and int(loc.split(":")[1], 16) == port:
+                out.add(hexip(rem.split(":")[0]))
+    return sorted(out)
+
+
+def system():
+    mem = {k: int(v.split()[0]) for k, v in (l.split(":", 1) for l in read("/proc/meminfo").splitlines())}
+    temp = read("/sys/class/thermal/thermal_zone0/temp")
+    active = subprocess.run(["systemctl", "is-active", *SERVICES], capture_output=True, text=True).stdout.split()
+    return {
+        "hostname": socket.gethostname(), "model": read("/proc/device-tree/model").rstrip("\x00"),
+        "kernel": os.uname().release, "uptime": int(float(read("/proc/uptime", "0").split()[0])),
+        "load": round(os.getloadavg()[0], 2), "temp": round(int(temp) / 1000, 1) if temp.isdigit() else None,
+        "mem_total": mem.get("MemTotal"), "mem_available": mem.get("MemAvailable"),
+        "ips": run("hostname", "-I")[1].split(), "usbip_module": os.path.isdir("/sys/module/usbip_host"),
+        "services": dict(zip(SERVICES, active)),
+    }
+
+
+def state():
+    exclude, serial = load_exclude(), load_serial()
+    devs = devices()
+    for d in devs:
+        d["blocked"] = blocked(d, exclude, serial)
+    for s in serial:
+        s["clients"] = peers(s["port"])
+        s["present"] = os.path.exists(s["tty"])
+    ttys = glob.glob("/dev/serial/by-id/*") + glob.glob("/dev/tty[UAS][SCM][BMA]*[0-9]")
+    return {"system": system(), "clients": peers(USBIP_PORT), "devices": devs, "exclude": exclude, "serial": serial,
+            "ttys": sorted(t for t in ttys if TTY.fullmatch(t)),
+            "bauds": BAUDS, "formats": FORMATS}
+
+
+def init():
+    """Crée la configuration manquante et reprend celle des anciens scripts install_server/install_ser2net."""
+    if not os.path.exists(f"{ETC}/exclude"):
+        old = [l.strip().lower() for l in read("/usr/local/etc/usbip/exclude").splitlines() if IDENT.fullmatch(l.strip().lower())]
+        save_exclude(old or ["0424:ec00", "0424:7800"])  # Ethernet USB des Pi 1/2/3 : le partager coupe le réseau
+    if not os.path.exists(f"{ETC}/serial.json"):
+        found = re.findall(r"connection: &(\S+)\s+accepter: tcp,(\d+)\s.*?connector: serialdev,([^,\s]+),(\d+)([noe][78][12])",
+                           read("/etc/ser2net.yaml"), re.S)
+        try:
+            save_serial([{"name": n, "port": int(p), "tty": t, "baud": int(b), "format": f} for n, p, t, b, f in found])
+        except ValueError as e:
+            print("usb-over-ip: ancienne config ser2net ignorée :", e)
+            save_serial([])
+    write(f"{ETC}/ser2net.yaml", ser2net_yaml(load_serial()))
+
+
+# ---------------------------------------------------------------- web
+
+def hash_password(pw, salt=None, rounds=100_000):
+    salt = salt or secrets.token_hex(8)
+    return f"pbkdf2_sha256${rounds}${salt}$" + hashlib.pbkdf2_hmac("sha256", pw.encode(), salt.encode(), rounds).hex()
+
+
+def check_password(pw, stored):
+    try:
+        _, rounds, salt, _ = stored.split("$")
+        return hmac.compare_digest(hash_password(pw, salt, int(rounds)), stored)
+    except ValueError:
+        return False
+
+
+AUTH_OK = set()  # en-têtes Authorization déjà vérifiés : PBKDF2 prend ~1 s sur un Pi 1
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "usb-over-ip"
+
+    def log_message(self, *args):
+        pass
+
+    def reply(self, code, body, ctype="application/json"):
+        data = body if isinstance(body, bytes) else (body.encode() if isinstance(body, str) else json.dumps(body).encode())
+        self.send_response(code)
+        self.send_header("Content-Type", ctype + "; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        if code == 401:
+            self.send_header("WWW-Authenticate", 'Basic realm="usb-over-ip", charset="UTF-8"')
+        self.end_headers()
+        self.wfile.write(data)
+
+    def authorized(self):
+        stored = read(f"{ETC}/password")
+        header = self.headers.get("Authorization", "")
+        if not stored or header in AUTH_OK:
+            return True
+        try:
+            pw = base64.b64decode(header.removeprefix("Basic ")).decode().partition(":")[2]
+        except ValueError:
+            pw = None
+        if pw and check_password(pw, stored):
+            AUTH_OK.add(header)
+            return True
+        time.sleep(1)
+        return False
+
+    def do_GET(self):
+        if not self.authorized():
+            return self.reply(401, {"error": "authentification requise"})
+        path = self.path.split("?")[0]
+        if path == "/":
+            with open(f"{HERE}/index.html", "rb") as f:
+                return self.reply(200, f.read(), "text/html")
+        if path == "/api/state":
+            if not read(f"{ETC}/password"):
+                return self.reply(200, {"setup": True})
+            return self.reply(200, state())
+        if path == "/api/logs" and read(f"{ETC}/password"):
+            units = [a for u in SERVICES for a in ("-u", u)]
+            return self.reply(200, run("journalctl", *units, "-n", "300", "--no-pager", "-o", "short-iso")[1], "text/plain")
+        self.reply(404, {"error": "introuvable"})
+
+    def do_POST(self):
+        if not self.authorized():
+            return self.reply(401, {"error": "authentification requise"})
+        # Un POST JSON cross-origin déclenche un preflight CORS que l'on ne satisfait pas : protège du CSRF.
+        if not self.headers.get("Content-Type", "").startswith("application/json"):
+            return self.reply(415, {"error": "JSON attendu"})
+        length = int(self.headers.get("Content-Length") or 0)
+        if length > 65536:
+            return self.reply(413, {"error": "requête trop grosse"})
+        try:
+            data = json.loads(self.rfile.read(length) or b"{}")
+            if not isinstance(data, dict):
+                raise ValueError("objet JSON attendu")
+            if not read(f"{ETC}/password") and self.path != "/api/password":
+                return self.reply(403, {"error": "définir d'abord un mot de passe"})
+            with LOCK:
+                result = self.action(self.path, data)
+            if self.path != "/api/password":
+                print(self.client_address[0], self.path, json.dumps(data), flush=True)
+            self.reply(200, result)
+            if self.path == "/api/reboot":
+                run("systemctl", "reboot")
+        except (ValueError, OSError) as e:
+            self.reply(400, {"error": str(e)})
+
+    def action(self, path, data):
+        if path == "/api/device":
+            busid, act = data.get("busid"), data.get("action")
+            if not isinstance(busid, str) or not BUSID.fullmatch(busid) or not os.path.exists(f"{SYS}/bus/usb/devices/{busid}"):
+                raise ValueError(f"périphérique inconnu : {busid!r}")
+            dev = device(busid)
+            if act == "bind":
+                rc, out = run("usbip", "bind", "-b", busid)
+            elif act == "unbind":
+                rc, out = run("usbip", "unbind", "-b", busid)
+            elif act == "exclude":
+                save_exclude(load_exclude() + [dev["ident"]])
+                rc, out = run("usbip", "unbind", "-b", busid) if dev["bound"] else (0, "")
+            elif act == "include":
+                save_exclude([e for e in load_exclude() if e not in (dev["ident"], f"{dev['vid']}:{dev['pid']}")])
+                rc, out = run("usbip", "bind", "-b", busid) if not dev["bound"] and not blocked(dev, [], load_serial()) else (0, "")
+            else:
+                raise ValueError(f"action inconnue : {act!r}")
+            return {"ok": rc == 0, "output": out}
+        if path == "/api/exclude":
+            entries = data.get("entries")
+            if not isinstance(entries, list) or not all(isinstance(e, str) for e in entries):
+                raise ValueError("liste attendue")
+            save_exclude([e.strip().lower() for e in entries if e.strip()])
+            unbind(only_blocked=True)
+            return {"ok": True}
+        if path == "/api/serial":
+            items = data.get("items")
+            if not isinstance(items, list) or not all(isinstance(i, dict) for i in items):
+                raise ValueError("liste attendue")
+            save_serial(items)
+            unbind(only_blocked=True)
+            rc, out = run("systemctl", "restart", "ser2net")
+            return {"ok": rc == 0, "output": out}
+        if path == "/api/service":
+            name, act = data.get("name"), data.get("action")
+            if name not in ("usb-over-ip", "ser2net") or act not in ("restart", "start", "stop"):
+                raise ValueError("service ou action invalide")
+            rc, out = run("systemctl", act, name)
+            return {"ok": rc == 0, "output": out}
+        if path == "/api/password":
+            pw = data.get("password")
+            if not isinstance(pw, str) or len(pw) < 8:
+                raise ValueError("8 caractères minimum")
+            write(f"{ETC}/password", hash_password(pw))
+            os.chmod(f"{ETC}/password", 0o600)
+            AUTH_OK.clear()
+            return {"ok": True}
+        if path == "/api/reboot":
+            return {"ok": True}
+        raise ValueError("action inconnue")
+
+
+def main(args):
+    if args[:1] == ["autobind"]:
+        autobind(args[1:] or None)
+    elif args == ["unbind-all"]:
+        unbind()
+    elif args == ["init"]:
+        init()
+    elif args[:1] == ["serve"]:
+        port = int(args[1]) if len(args) > 1 else 80
+        print(f"usb-over-ip : interface web sur le port {port}", flush=True)
+        ThreadingHTTPServer(("", port), Handler).serve_forever()
+    else:
+        sys.exit(__doc__)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
