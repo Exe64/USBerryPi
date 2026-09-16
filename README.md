@@ -1,5 +1,7 @@
 # USBerryPi
 
+![USBerryPi](docs/banner.jpg)
+
 Turns a Raspberry Pi (Pi 1 to Pi 5) into a network USB device server:
 
 - **USB/IP** (tcp/3240): every plugged-in device is shared automatically, except hubs and exclusions.
