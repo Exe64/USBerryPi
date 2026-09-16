@@ -1,4 +1,4 @@
-# usb-over-ip
+# USBerryPi
 
 Transforme un Raspberry Pi (Pi 1 à Pi 5) en serveur de périphériques USB en réseau :
 
