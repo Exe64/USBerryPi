@@ -208,7 +208,7 @@ document.addEventListener("click", async e => {
   }
 });
 
-// Toute modification du formulaire ser2net bascule en brouillon : le rafraîchissement auto ne l'écrase plus.
+// Any edit to the ser2net form switches to draft mode: auto-refresh no longer overwrites it.
 document.addEventListener("input", e => {
   if (e.target.closest("tr[data-i]") && !serialDraft) {
     serialDraft = readSerialForm();
@@ -218,7 +218,7 @@ document.addEventListener("input", e => {
 });
 
 async function refresh() {
-  // Ne pas redessiner pendant une saisie (brouillon ser2net, exclusions, mot de passe, journaux ouverts).
+  // Don't re-render while the user is typing (ser2net draft, exclusions, password, open logs).
   const a = document.activeElement;
   if (S && !S.setup && (serialDraft || (a && a.matches("input, textarea, select")) || !$("#logs")?.hidden)) return;
   try {

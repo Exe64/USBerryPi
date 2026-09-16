@@ -5,7 +5,7 @@ import uoip
 
 
 def mkdev(root, busid, vid, pid, serial="", cls="00", tty=None):
-    """Imite sysfs : vrais dossiers sous devices/, liens symboliques dans bus/usb/devices/."""
+    """Mimics sysfs: real directories under devices/, symlinks in bus/usb/devices/."""
     d, links = f"{root}/devices/{busid}", f"{root}/bus/usb/devices"
     os.makedirs(d)
     os.makedirs(links, exist_ok=True)
@@ -40,7 +40,7 @@ class Test(unittest.TestCase):
         return {d["busid"]: uoip.blocked(d, exclude, serial) for d in uoip.devices()}
 
     def test_devices_and_blocking(self):
-        self.assertEqual(list(self.blocked()), ["1-1", "1-1.1", "1-1.2", "1-1.10"])  # tri numérique, usb1 ignoré
+        self.assertEqual(list(self.blocked()), ["1-1", "1-1.1", "1-1.2", "1-1.10"])  # numeric sort, usb1 skipped
         self.assertEqual(self.blocked(), {"1-1": "hub", "1-1.1": "exclu", "1-1.2": "", "1-1.10": ""})
         self.assertEqual(uoip.device("1-1.2")["ttys"], ["ttyUSB0"])
 
@@ -59,7 +59,7 @@ class Test(unittest.TestCase):
             with self.assertRaises(ValueError, msg=bad):
                 uoip.save_serial([{**ok, **bad}])
         with self.assertRaises(ValueError):
-            uoip.save_serial([ok, {**ok, "name": "tic2"}])  # port en double
+            uoip.save_serial([ok, {**ok, "name": "tic2"}])  # duplicate port
         uoip.save_serial([ok])
 
     def test_migration_from_old_scripts(self):

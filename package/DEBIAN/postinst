@@ -2,7 +2,7 @@
 set -e
 [ "$1" = configure ] || exit 0
 
-# Anciens scripts install_server : même port 3240 et règle udev concurrente.
+# Legacy install_server scripts: same port 3240 and a competing udev rule.
 if [ -f /etc/systemd/system/usbipd.service ]; then
   systemctl disable --now usbipd.service 2>/dev/null || true
   rm -f /etc/systemd/system/usbipd.service /etc/udev/rules/90-usbip-autobind.rules /usr/local/sbin/usbip-autobind
@@ -11,7 +11,7 @@ fi
 /usr/lib/usb-over-ip/uoip.py init
 
 systemctl enable usb-over-ip.service usb-over-ip-web.service ser2net.service
-# Dans un chroot (construction d'image) systemd ne tourne pas : tout démarrera au boot.
+# In a chroot (image build) systemd is not running: everything starts at boot.
 if [ -d /run/systemd/system ]; then
   systemctl daemon-reload
   udevadm control --reload-rules || true

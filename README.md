@@ -1,35 +1,35 @@
 # USBerryPi
 
-Transforme un Raspberry Pi (Pi 1 à Pi 5) en serveur de périphériques USB en réseau :
+Turns a Raspberry Pi (Pi 1 to Pi 5) into a network USB device server:
 
-- **USB/IP** (tcp/3240) : tout périphérique branché est partagé automatiquement, sauf hubs et exclusions.
-- **ser2net** : les ports série choisis (dongle Zigbee, module TIC…) sont exposés en TCP et jamais partagés en USB/IP.
-- **Interface web** (port 80) : périphériques, clients connectés, ser2net, exclusions, services, journaux, redémarrage.
+- **USB/IP** (tcp/3240): every plugged-in device is shared automatically, except hubs and exclusions.
+- **ser2net**: selected serial ports (Zigbee dongle, TIC module…) are exposed over TCP and never shared over USB/IP.
+- **Web UI** (port 80): devices, connected clients, ser2net, exclusions, services, logs, reboot.
 
 ## Installation
 
-### Option 1 : image prête à flasher
+### Option 1: ready-to-flash image
 
-Dans les [releases](../../releases) :
+From the [releases](../../releases):
 
-| Image | Modèles |
+| Image | Models |
 |---|---|
 | `usb-over-ip-armhf.img.xz` | Pi 1, 2, 3, 4, 5 |
-| `usb-over-ip-arm64.img.xz` | Pi 3, 4, 5 (64 bits) |
+| `usb-over-ip-arm64.img.xz` | Pi 3, 4, 5 (64-bit) |
 
-Flasher avec **Raspberry Pi Imager** (« Use custom ») et renseigner les réglages de personnalisation : utilisateur, SSH, Wi-Fi. Sans personnalisation, l'image démarre en DHCP sur Ethernet ; l'utilisateur système est créé au premier démarrage sur la console.
+Flash with **Raspberry Pi Imager** ("Use custom") and fill in the customisation settings: user, SSH, Wi-Fi. Without customisation, the image boots with DHCP on Ethernet and the system user is created on the console at first boot.
 
-Ouvrir ensuite http://usbip.local (ou l'IP du Pi). Au premier accès, l'interface demande de choisir son mot de passe.
+Then open http://usbip.local (or the Pi's IP). On first access, the UI asks you to choose a password.
 
-### Option 2 : paquet sur un Raspberry Pi OS existant
+### Option 2: package on an existing Raspberry Pi OS
 
 ```sh
 sudo apt install ./usb-over-ip_<version>_all.deb
 ```
 
-Les installations faites avec les anciens scripts `install_server` / `install_ser2net` sont migrées automatiquement : liste d'exclusion, ports ser2net et remplacement de l'ancien service `usbipd`.
+Installations made with the legacy `install_server` / `install_ser2net` scripts are migrated automatically: exclusion list, ser2net ports, and replacement of the old `usbipd` service.
 
-## Côté client
+## Client side
 
 ```sh
 sudo modprobe vhci-hcd
@@ -37,29 +37,29 @@ usbip list -r usbip.local
 sudo usbip attach -r usbip.local -b 1-1.2
 ```
 
-Pour ser2net, dans Home Assistant par exemple : `socket://usbip.local:6638`.
+For ser2net, e.g. in Home Assistant: `socket://usbip.local:6638`.
 
-## Fichiers sur le Pi
+## Files on the Pi
 
-| Chemin | Rôle |
+| Path | Purpose |
 |---|---|
-| `/etc/usb-over-ip/exclude` | `vid:pid` ou `vid:pid:série` jamais partagés |
-| `/etc/usb-over-ip/serial.json` | ports ser2net (source de vérité, éditée par l'UI) |
-| `/etc/usb-over-ip/ser2net.yaml` | configuration ser2net générée |
-| `/etc/usb-over-ip/password` | mot de passe de l'UI (PBKDF2) ; le supprimer le réinitialise |
-| `/usr/lib/usb-over-ip/uoip.py` | autobind, génération ser2net et serveur web (Python stdlib) |
+| `/etc/usb-over-ip/exclude` | `vid:pid` or `vid:pid:serial` never shared |
+| `/etc/usb-over-ip/serial.json` | ser2net ports (source of truth, edited by the UI) |
+| `/etc/usb-over-ip/ser2net.yaml` | generated ser2net configuration |
+| `/etc/usb-over-ip/password` | UI password (PBKDF2); delete it to reset |
+| `/usr/lib/usb-over-ip/uoip.py` | autobind, ser2net generation and web server (Python stdlib) |
 
-Services : `usb-over-ip` (usbipd), `usb-over-ip-web`, `ser2net`.
+Services: `usb-over-ip` (usbipd), `usb-over-ip-web`, `ser2net`.
 
-## Sécurité
+## Security
 
-L'interface tourne en root, protégée par un mot de passe en HTTP Basic sans TLS. Elle est prévue pour un réseau local de confiance : ne pas l'exposer sur Internet. Tant qu'aucun mot de passe n'est défini, le premier visiteur le choisit. USB/IP lui-même n'a aucune authentification.
+The UI runs as root, protected by an HTTP Basic password without TLS. It is meant for a trusted local network: do not expose it to the Internet. Until a password is set, the first visitor gets to choose it. USB/IP itself has no authentication at all.
 
-## Développement
+## Development
 
 ```sh
-make test                    # tests unitaires (Python 3, sans dépendance)
-make deb VERSION=1.0.0       # nécessite dpkg-deb
+make test                    # unit tests (Python 3, no dependencies)
+make deb VERSION=1.0.0       # requires dpkg-deb
 ```
 
-Publier une version : `git tag v1.0.0 && git push --tags`. GitHub Actions construit le `.deb`, puis les deux images avec [pi-gen](https://github.com/RPi-Distro/pi-gen) (stage `image/stage-usbip`), et les attache à la release.
+Release a version: `git tag v1.0.0 && git push --tags`. GitHub Actions builds the `.deb`, then both images with [pi-gen](https://github.com/RPi-Distro/pi-gen) (stage `image/stage-usbip`), and attaches them to the release.

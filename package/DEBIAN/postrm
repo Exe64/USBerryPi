@@ -4,6 +4,6 @@ set -e
 if [ -d /run/systemd/system ]; then
   systemctl daemon-reload
   udevadm control --reload-rules || true
-  # ser2net retrouve sa configuration /etc/ser2net.yaml
+  # ser2net goes back to its own /etc/ser2net.yaml
   [ "$1" = remove ] && systemctl try-restart ser2net.service || true
 fi

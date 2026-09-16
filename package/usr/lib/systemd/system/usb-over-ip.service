@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 ExecStartPre=/usr/sbin/modprobe usbip_host
 ExecStart=/usr/sbin/usbipd
-# Périphériques déjà branchés au démarrage ; les suivants passent par la règle udev
+# Devices already plugged in at startup; later ones go through the udev rule
 ExecStartPost=/usr/lib/usb-over-ip/uoip.py autobind
 Restart=always
 

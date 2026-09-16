@@ -1,7 +1,7 @@
 #!/bin/sh
-# Expose le dongle Zigbee et le module TIC en TCP pour Home Assistant (ser2net).
+# Expose the Zigbee dongle and the TIC module over TCP for Home Assistant (ser2net).
 # Usage : sudo ./install_ser2net /dev/serial/by-id/<zigbee> /dev/serial/by-id/<tic> [1200|9600]
-#   1200 = TIC mode historique (défaut), 9600 = TIC mode standard
+#   1200 = TIC historical mode (default), 9600 = TIC standard mode
 set -e
 [ "$(id -u)" -eq 0 ] || { echo "Please run with sudo"; exit 1; }
 [ -e "$1" ] && [ -e "$2" ] || { echo "Usage: $0 <zigbee-tty> <tic-tty> [1200|9600]"; ls /dev/serial/by-id/ 2>/dev/null; exit 1; }
@@ -27,7 +27,7 @@ connection: &tic
   connector: serialdev,$TIC,${TIC_BAUD}e71,local
 EOF
 
-# Si le serveur USB/IP est installé, l'empêcher de capturer ces deux périphériques
+# If the USB/IP server is installed, keep it from grabbing these two devices
 if [ -f /usr/local/etc/usbip/exclude ]; then
   for t in "$ZIGBEE" "$TIC"; do
     busid=$(udevadm info -q path -n "$t" | grep -o '/[0-9]*-[0-9.]*:' | head -1 | tr -d '/:')

@@ -1,10 +1,10 @@
-# Configuration pi-gen (IMG_NAME est ajouté par la CI selon l'architecture)
+# pi-gen configuration (IMG_NAME is appended by CI per architecture)
 TARGET_HOSTNAME=usbip
 LOCALE_DEFAULT=fr_FR.UTF-8
 KEYBOARD_KEYMAP=fr
 KEYBOARD_LAYOUT="French"
 TIMEZONE_DEFAULT=Europe/Paris
-# SSH, utilisateur et Wi-Fi : via les réglages de Raspberry Pi Imager
+# SSH, user and Wi-Fi: set through Raspberry Pi Imager customisation
 ENABLE_SSH=0
 DEPLOY_COMPRESSION=xz
 STAGE_LIST="stage0 stage1 stage2 stage-usbip"
