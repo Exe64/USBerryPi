@@ -19,7 +19,25 @@ From the [releases](../../releases):
 | `usb-over-ip-armhf.img.xz` | Pi 1, 2, 3, 4, 5 |
 | `usb-over-ip-arm64.img.xz` | Pi 3, 4, 5 (64-bit) |
 
-Flash with **Raspberry Pi Imager** ("Use custom") and fill in the customisation settings: user, SSH, Wi-Fi. Without customisation, the image boots with DHCP on Ethernet and the system user is created on the console at first boot.
+Flash with **Raspberry Pi Imager** ("Use custom"). Without customisation, the image boots with DHCP on Ethernet and the system user is created on the console at first boot.
+
+Imager 2.0 greys out the customisation step for custom images: it only offers it for images declared in a manifest. To get user, SSH and Wi-Fi settings back, save this next to the image as `os_list_local.rpi-imager-manifest` (double-click it, or App Options -> Content Repository -> Use custom file):
+
+```json
+{
+  "imager": { "latest_version": "2.0.0", "url": "https://www.raspberrypi.com/software/", "devices": [] },
+  "os_list": [
+    {
+      "name": "USBerryPi",
+      "description": "USB/IP device server",
+      "url": "file:///absolute/path/to/usb-over-ip-arm64.img.xz",
+      "init_format": "cloudinit-rpi"
+    }
+  ]
+}
+```
+
+The file has to be re-selected each time Imager restarts.
 
 Then open http://usbip.local (or the Pi's IP). On first access, the UI asks you to choose a password.
 
