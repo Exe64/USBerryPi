@@ -42,10 +42,13 @@ jobs:
           cp image/config pi-gen/config
           echo "IMG_NAME=usb-over-ip-${{ matrix.arch }}" >> pi-gen/config
           cd pi-gen && ./build-docker.sh
+          # pi-gen names its output image_<date>-<IMG_NAME>.img.xz; the release
+          # assets need a stable name for releases/latest/download/ links
+          mv deploy/*.img.xz ../usb-over-ip-${{ matrix.arch }}.img.xz
       - uses: actions/upload-artifact@v7
         with:
           name: image-${{ matrix.arch }}
-          path: pi-gen/deploy/*.img.xz
+          path: usb-over-ip-${{ matrix.arch }}.img.xz
           compression-level: 0
 
   release:
