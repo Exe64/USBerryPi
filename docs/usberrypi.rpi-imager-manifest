@@ -1,0 +1,17 @@
+{
+  "imager": { "latest_version": "2.0.0", "url": "https://www.raspberrypi.com/software/", "devices": [] },
+  "os_list": [
+    {
+      "name": "USBerryPi (armhf)",
+      "description": "USB/IP device server - Pi 1 to Pi 5",
+      "url": "https://github.com/Exe64/USBerryPi/releases/latest/download/usb-over-ip-armhf.img.xz",
+      "init_format": "cloudinit-rpi"
+    },
+    {
+      "name": "USBerryPi (arm64)",
+      "description": "USB/IP device server - Pi 3 to Pi 5, 64-bit",
+      "url": "https://github.com/Exe64/USBerryPi/releases/latest/download/usb-over-ip-arm64.img.xz",
+      "init_format": "cloudinit-rpi"
+    }
+  ]
+}
