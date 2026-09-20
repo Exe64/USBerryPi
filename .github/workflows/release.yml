@@ -57,7 +57,24 @@ jobs:
     runs-on: ubuntu-latest
     permissions: { contents: write }
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
-        with: { merge-multiple: true }
+        with: { merge-multiple: true, path: dist }
+      - name: Fill the Imager manifest with this release's sizes and checksums
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, subprocess
+          m = json.loads(pathlib.Path("docs/usberrypi.rpi-imager-manifest").read_text())
+          for e in m["os_list"]:
+              f = pathlib.Path("dist") / e["url"].rsplit("/", 1)[1]
+              e["image_download_size"] = f.stat().st_size
+              # extract_* describe the uncompressed image: size from the xz index,
+              # sha256 of the decompressed stream (what Imager verifies on write)
+              listing = subprocess.run(["xz", "--robot", "--list", f], capture_output=True, text=True, check=True)
+              e["extract_size"] = int(listing.stdout.splitlines()[-1].split("\t")[4])
+              digest = subprocess.run(f"xz -dc {f} | sha256sum", shell=True, capture_output=True, text=True, check=True)
+              e["extract_sha256"] = digest.stdout.split()[0]
+          pathlib.Path("dist/usberrypi.rpi-imager-manifest").write_text(json.dumps(m, indent=2) + "\n")
+          PY
       - uses: softprops/action-gh-release@v3
-        with: { files: "*", generate_release_notes: true }
+        with: { files: "dist/*", generate_release_notes: true }
