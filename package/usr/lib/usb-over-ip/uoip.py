@@ -342,6 +342,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/":
             with open(f"{HERE}/index.html", "rb") as f:
                 return self.reply(200, f.read(), "text/html")
+        if path == "/banner.jpg":
+            with open(f"{HERE}/banner.jpg", "rb") as f:
+                return self.reply(200, f.read(), "image/jpeg")
         if path == "/api/state":
             if not read(f"{ETC}/password"):
                 return self.reply(200, {"setup": True})
