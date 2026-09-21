@@ -52,6 +52,11 @@ class Test(unittest.TestCase):
         self.assertIn("connection: &zigbee\n  accepter: tcp,6638\n", yaml)
         self.assertIn("connector: serialdev,/dev/ttyUSB0,115200n81,local,nobreak", yaml)
 
+    def test_ser2net_yaml_without_ports(self):
+        # ser2net exits on an empty YAML document: with no port the file must still hold a mapping
+        body = [l for l in uoip.ser2net_yaml([]).splitlines() if l and not l.startswith(("%", "---", "#"))]
+        self.assertEqual(body[0].split("#")[0].strip(), "{}")
+
     def test_serial_validation(self):
         ok = {"name": "tic", "tty": "/dev/serial/by-id/usb-FTDI_x-if00-port0", "port": 6639, "baud": 1200, "format": "e71"}
         for bad in ({"name": "a b"}, {"tty": "/etc/passwd"}, {"tty": "/dev/ttyUSB0,9600"}, {"port": 3240},

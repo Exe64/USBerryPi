@@ -6,8 +6,9 @@
 <title>USB over IP</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔌</text></svg>">
 <style>
-:root { --bg:#f6f7f9; --card:#fff; --fg:#1b1f24; --muted:#667085; --line:#e4e7ec; --accent:#2563eb; --ok:#15803d; --warn:#b45309; --bad:#b91c1c; }
-@media (prefers-color-scheme: dark) { :root { --bg:#0f1115; --card:#171a21; --fg:#e6e8eb; --muted:#9aa3af; --line:#2a2f3a; --accent:#60a5fa; --ok:#4ade80; --warn:#fbbf24; --bad:#f87171; } }
+:root { color-scheme:light dark; --bg:light-dark(#f6f7f9, #0f1115); --card:light-dark(#fff, #171a21); --fg:light-dark(#1b1f24, #e6e8eb); --muted:light-dark(#667085, #9aa3af);
+  --line:light-dark(#e4e7ec, #2a2f3a); --accent:light-dark(#2563eb, #60a5fa); --ok:light-dark(#15803d, #4ade80); --warn:light-dark(#b45309, #fbbf24); --bad:light-dark(#b91c1c, #f87171); }
+:root[data-theme=light] { color-scheme:light; } :root[data-theme=dark] { color-scheme:dark; }
 * { box-sizing:border-box; }
 body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, sans-serif; }
 header { padding:16px; border-bottom:1px solid var(--line); background:var(--card); display:flex; flex-wrap:wrap; gap:8px 24px; align-items:baseline; }
@@ -35,7 +36,7 @@ pre { max-height:400px; overflow:auto; font-size:12px; background:var(--bg); pad
 </style>
 </head>
 <body>
-<header><h1>🔌 USB over IP</h1><span id="host" class="muted"></span></header>
+<header><h1>🔌 USB over IP</h1><span id="host" class="muted"></span><button id="theme" style="margin-left:auto" title="Thème clair / sombre"></button></header>
 <main id="app"><section>Chargement…</section></main>
 <div id="toast" role="status"></div>
 <script>
@@ -43,6 +44,15 @@ const $ = s => document.querySelector(s);
 const esc = v => String(v ?? "").replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
 const fmtLabel = f => f[1] + f[0].toUpperCase() + f[2];  // "n81" -> "8N1"
 let S = null, serialDraft = null, busy = false;
+
+// Theme follows the system until the user picks one with the header button.
+function setTheme(t, save) {
+  document.documentElement.dataset.theme = t;
+  $("#theme").textContent = t === "dark" ? "☀️" : "🌙";
+  if (save) try { localStorage.setItem("theme", t); } catch {}
+}
+let savedTheme = null; try { savedTheme = localStorage.getItem("theme"); } catch {}
+setTheme(savedTheme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
 
 function toast(msg, bad) {
   const t = $("#toast"); t.textContent = msg; t.style.background = bad ? "var(--bad)" : "";
@@ -188,6 +198,7 @@ document.addEventListener("click", async e => {
   if (t.dataset.svc) return act("/api/service", { name: t.dataset.svc, action: "restart" }, `${t.dataset.svc} redémarré`);
   if (t.dataset.del) { serialDraft = readSerialForm(); serialDraft.splice(+t.dataset.del, 1); return render(); }
   switch (t.id) {
+    case "theme": return setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark", true);
     case "serial-add": {
       serialDraft = readSerialForm();
       const port = Math.max(6637, ...serialDraft.map(p => p.port)) + 1;
@@ -219,8 +230,9 @@ document.addEventListener("input", e => {
 
 async function refresh() {
   // Don't re-render while the user is typing (ser2net draft, exclusions, password, open logs).
+  // The first-login page is static: once shown, re-rendering it would only wipe the password field.
   const a = document.activeElement;
-  if (S && !S.setup && (serialDraft || (a && a.matches("input, textarea, select")) || !$("#logs")?.hidden)) return;
+  if (S && (S.setup || serialDraft || (a && a.matches("input, textarea, select")) || !$("#logs")?.hidden)) return;
   try {
     S = await api("/api/state");
     S.setup ? renderSetup() : render();
