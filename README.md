@@ -41,10 +41,24 @@ Installations made with the legacy `install_server` / `install_ser2net` scripts 
 
 ## Client side
 
+A shared device is used by one client at a time; once attached, it behaves like a local USB device (a USB key shows up as a drive). The bus ID (`1-1.2`) is the first column of the device list in the UI.
+
+Linux (`usbip` comes with `linux-tools` / `usbip` packages):
+
 ```sh
 sudo modprobe vhci-hcd
 usbip list -r usbip.local
 sudo usbip attach -r usbip.local -b 1-1.2
+sudo usbip port                 # attached devices
+sudo usbip detach -p 00         # release it for other clients
+```
+
+Windows 10 1903+ / 11: install [usbip-win2](https://github.com/vadimgrn/usbip-win2) (signed drivers), then in an administrator prompt:
+
+```bat
+usbip list -r usbip.local
+usbip attach -r usbip.local -b 1-1.2
+usbip detach -p 1               :: port number printed by attach
 ```
 
 For ser2net, e.g. in Home Assistant: `socket://usbip.local:6638`.
