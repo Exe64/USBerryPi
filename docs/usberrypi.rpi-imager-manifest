@@ -105,7 +105,8 @@
         "pi3-32bit",
         "pi4-32bit",
         "pi5-32bit"
-      ]
+      ],
+      "icon": "https://raw.githubusercontent.com/Exe64/USBerryPi/main/docs/icon.png"
     },
     {
       "name": "USBerryPi (arm64)",
@@ -116,7 +117,8 @@
         "pi3-64bit",
         "pi4-64bit",
         "pi5-64bit"
-      ]
+      ],
+      "icon": "https://raw.githubusercontent.com/Exe64/USBerryPi/main/docs/icon.png"
     }
   ]
 }

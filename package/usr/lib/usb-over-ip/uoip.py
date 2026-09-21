@@ -27,6 +27,7 @@ TTY = re.compile(r"/dev/(serial/by-id/[\w.:+@-]+|tty(USB|ACM|AMA|S)\d+)", re.A)
 IDENT = re.compile(r"[0-9a-f]{4}:[0-9a-f]{4}(:[\x21-\x7e]{1,126})?")
 NAME = re.compile(r"[A-Za-z0-9_-]{1,32}")
 SERVICES = ("usb-over-ip", "usb-over-ip-web", "ser2net")
+STATIC = {"/banner.jpg": "image/jpeg", "/logo.svg": "image/svg+xml"}  # served next to index.html
 LOCK = threading.Lock()  # ponytail: one global lock for all writes, plenty for a single admin
 
 
@@ -342,9 +343,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/":
             with open(f"{HERE}/index.html", "rb") as f:
                 return self.reply(200, f.read(), "text/html")
-        if path == "/banner.jpg":
-            with open(f"{HERE}/banner.jpg", "rb") as f:
-                return self.reply(200, f.read(), "image/jpeg")
+        if path in STATIC:
+            with open(f"{HERE}{path}", "rb") as f:
+                return self.reply(200, f.read(), STATIC[path])
         if path == "/api/state":
             if not read(f"{ETC}/password"):
                 return self.reply(200, {"setup": True})

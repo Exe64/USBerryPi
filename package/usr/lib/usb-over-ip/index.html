@@ -4,14 +4,17 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>USBerryPi</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔌</text></svg>">
+<link rel="icon" href="logo.svg" type="image/svg+xml">
 <style>
 :root { color-scheme:dark; --bg:#0f1115; --card:#171a21; --fg:#e6e8eb; --muted:#9aa3af; --line:#2a2f3a; --accent:#60a5fa; --ok:#4ade80; --warn:#fbbf24; --bad:#f87171; }
 * { box-sizing:border-box; }
 body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, sans-serif; }
-header { padding:16px; border-bottom:1px solid var(--line); min-height:130px; display:flex; flex-wrap:wrap; gap:8px 24px; align-items:baseline; align-content:flex-end;
-  background:linear-gradient(90deg, #0f1115e6 25%, #0f111533), url(banner.jpg) center/cover; }
-header h1 { margin:0; font-size:18px; }
+header { padding:16px 24px; border-bottom:1px solid var(--line); min-height:180px; display:flex; flex-direction:column; justify-content:flex-end; gap:2px;
+  background:linear-gradient(90deg, #0f1115f0 20%, #0f111526 60%), url(banner.jpg) center 35%/cover; }
+header h1 { margin:0; font-size:22px; display:flex; align-items:center; gap:12px; letter-spacing:.2px; }
+header h1 img { width:44px; height:44px; filter:drop-shadow(0 0 10px #38bdf866); }
+header #host { padding-left:56px; }  /* under the title text, past the 44px logo + 12px gap */
+header h1, header #host { text-shadow:0 1px 8px #000d; }  /* legible over the banner on narrow screens */
 main { max-width:1100px; margin:auto; padding:16px; display:grid; gap:16px; }
 section { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:16px; overflow-x:auto; }
 h2 { margin:0 0 12px; font-size:15px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
@@ -25,8 +28,10 @@ th { color:var(--muted); font-weight:500; font-size:12px; }
 .ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); } .off { color:var(--muted); }
 button, input, select { font:inherit; color:inherit; background:var(--card); border:1px solid var(--line); border-radius:6px; padding:4px 10px; }
 button { cursor:pointer; } button:hover { border-color:var(--accent); }
-button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+button.primary { background:var(--accent); border-color:var(--accent); color:#0f1115; font-weight:600; }
 button.danger { color:var(--bad); }
+button.icon { padding:4px 6px; line-height:0; }
+button.icon svg { width:16px; height:16px; }
 input, select { min-width:0; }
 .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:8px 16px; }
 .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
@@ -38,7 +43,7 @@ pre { max-height:400px; overflow:auto; font-size:12px; background:var(--bg); pad
 </style>
 </head>
 <body>
-<header><h1>🔌 USBerryPi</h1><span id="host" class="muted"></span></header>
+<header><h1><img src="logo.svg" alt="">USBerryPi</h1><span id="host" class="muted"></span></header>
 <main id="app"><section>Chargement…</section></main>
 <div id="toast" role="status"></div>
 <script>
@@ -96,7 +101,8 @@ function status(d) {
 function accessTip(d, host) {
   if (!d.bound) return "";
   const id = esc("tip-" + d.busid), r = `-r ${esc(host)} -b ${esc(d.busid)}`;
-  return `<button popovertarget="${id}" title="Accéder depuis un poste client" aria-label="Commandes d'accès">ⓘ</button>
+  return `<button class="icon" popovertarget="${id}" title="Accéder depuis un poste client" aria-label="Commandes d'accès">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6M12 19h8"/></svg></button>
     <div id="${id}" popover>
       <b>${esc(d.product || d.busid)}</b> — un seul poste client à la fois${d.used ? " ; déjà attaché, libérez-le d'abord de l'autre poste" : ""}.
       <div class="muted" style="margin-top:8px">Windows 10/11 — <a href="https://github.com/vadimgrn/usbip-win2" target="_blank" rel="noopener">usbip-win2</a>, invite administrateur :</div>

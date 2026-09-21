@@ -93,6 +93,7 @@ When a newer release exists, the UI offers to install it: the machine downloads 
 ```sh
 make test                    # unit tests (Python 3, no dependencies)
 make deb VERSION=1.0.0       # requires dpkg-deb
+rsvg-convert -w 128 -h 128 docs/logo.svg -o docs/icon.png   # Imager icon, after editing the logo
 ```
 
 Release a version: `git tag v1.0.0 && git push --tags`. GitHub Actions builds the `.deb`, then both images with [pi-gen](https://github.com/RPi-Distro/pi-gen) (stage `image/stage-usbip`), and attaches them to the release.
