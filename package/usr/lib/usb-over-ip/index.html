@@ -32,6 +32,9 @@ input, select { min-width:0; }
 .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:8px 16px; }
 .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
 pre { max-height:400px; overflow:auto; font-size:12px; background:var(--bg); padding:8px; border-radius:6px; white-space:pre-wrap; }
+[popover] { border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--fg); padding:12px 16px; max-width:min(560px, calc(100vw - 32px)); box-shadow:0 8px 24px #0004; }
+[popover]::backdrop { background:#0003; }
+[popover] pre { margin:4px 0 12px; }
 #toast { position:fixed; bottom:16px; left:16px; right:16px; max-width:600px; margin:auto; padding:10px 14px; border-radius:8px; background:var(--fg); color:var(--bg); display:none; white-space:pre-wrap; }
 </style>
 </head>
@@ -88,6 +91,20 @@ function status(d) {
   return `<span class="pill off">local</span>`;
 }
 
+// Client-side commands for a shared device, in a popover (top layer: not clipped by the table's scroll box).
+function accessTip(d, host) {
+  if (!d.bound) return "";
+  const id = esc("tip-" + d.busid), r = `-r ${esc(host)} -b ${esc(d.busid)}`;
+  return `<button popovertarget="${id}" title="Accéder depuis un poste client" aria-label="Commandes d'accès">ⓘ</button>
+    <div id="${id}" popover>
+      <b>${esc(d.product || d.busid)}</b> — un seul poste client à la fois${d.used ? " ; déjà attaché, libérez-le d'abord de l'autre poste" : ""}.
+      <div class="muted" style="margin-top:8px">Windows 10/11 — <a href="https://github.com/vadimgrn/usbip-win2" target="_blank" rel="noopener">usbip-win2</a>, invite administrateur :</div>
+      <pre>usbip attach ${r}\nusbip detach -p &lt;port affiché par attach&gt;</pre>
+      <div class="muted">Linux :</div>
+      <pre>sudo modprobe vhci-hcd\nsudo usbip attach ${r}\nsudo usbip port\nsudo usbip detach -p &lt;port&gt;</pre>
+    </div>`;
+}
+
 function deviceActions(d) {
   if (d.hub) return "";
   const b = (a, label, cls = "") => `<button class="${cls}" data-dev="${esc(d.busid)}" data-act="${a}">${label}</button>`;
@@ -132,7 +149,7 @@ function render() {
         <td class="muted">${esc(d.class)} · USB ${esc(d.version)} · ${esc(d.speed)} Mb/s · ${esc(d.power)}
           ${d.interfaces.length ? `<div>${d.interfaces.map(i => esc(i.class) + (i.driver ? ` (${esc(i.driver)})` : "")).join(", ")}</div>` : ""}
           ${d.ttys.length ? `<div class="mono">${d.ttys.map(t => "/dev/" + esc(t)).join(", ")}</div>` : ""}</td>
-        <td>${status(d)}</td>
+        <td><div class="row">${status(d)}${accessTip(d, s.ips[0] || s.hostname)}</div></td>
         <td>${deviceActions(d)}</td></tr>`).join("") || `<tr><td colspan="6" class="muted">Aucun périphérique USB.</td></tr>`}
     </table>
   </section>
@@ -231,8 +248,9 @@ document.addEventListener("input", e => {
 async function refresh() {
   // Don't re-render while the user is typing (ser2net draft, exclusions, password, open logs).
   // The first-login page is static: once shown, re-rendering it would only wipe the password field.
+  // An open command popover would be closed by the re-render.
   const a = document.activeElement;
-  if (S && (S.setup || serialDraft || (a && a.matches("input, textarea, select")) || !$("#logs")?.hidden)) return;
+  if (S && (S.setup || document.querySelector(":popover-open") || serialDraft || (a && a.matches("input, textarea, select")) || !$("#logs")?.hidden)) return;
   try {
     S = await api("/api/state");
     S.setup ? renderSetup() : render();
