@@ -118,6 +118,9 @@ class Test(unittest.TestCase):
         status, st = call("/api/state", auth=good)
         self.assertEqual((status, [d["busid"] for d in st["devices"]]), (200, ["1-1", "1-1.1", "1-1.2", "1-1.10"]))
         self.assertEqual(call("/api/device", {"busid": "../../x", "action": "bind"}, auth=good)[0], 400)
+        self.assertEqual(st["version"], uoip.VERSION)
+        # the version ends up in a URL and a shell command: anything but x.y.z is refused
+        self.assertEqual(call("/api/update", {"version": "1.0.0; reboot"}, auth=good)[0], 400)
         srv.shutdown()
         srv.server_close()
 

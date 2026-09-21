@@ -7,9 +7,11 @@ Stdlib only, so it runs as-is from Pi 1 (ARMv6) to Pi 5.
   uoip.py init                  create/migrate the configuration (postinst)
   uoip.py serve [PORT]          web UI (port 80 by default)
 """
-import base64, glob, hashlib, hmac, json, os, re, secrets, socket, subprocess, sys, threading, time
+import base64, glob, hashlib, hmac, json, os, re, secrets, socket, subprocess, sys, threading, time, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+VERSION = "@VERSION@"  # stamped by make deb
+REPO = "Exe64/USBerryPi"  # GitHub releases the update button installs from
 SYS = "/sys"
 ETC = "/etc/usb-over-ip"
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -221,7 +223,7 @@ def state():
         s["clients"] = peers(s["port"])
         s["present"] = os.path.exists(s["tty"])
     ttys = glob.glob("/dev/serial/by-id/*") + glob.glob("/dev/tty[UAS][SCM][BMA]*[0-9]")
-    return {"system": system(), "clients": peers(USBIP_PORT), "devices": devs, "exclude": exclude, "serial": serial,
+    return {"version": VERSION, "system": system(), "clients": peers(USBIP_PORT), "devices": devs, "exclude": exclude, "serial": serial,
             "ttys": sorted(t for t in ttys if TTY.fullmatch(t)),
             "bauds": BAUDS, "formats": FORMATS}
 
@@ -306,7 +308,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, {"setup": True})
             return self.reply(200, state())
         if path == "/api/logs" and read(f"{ETC}/password"):
-            units = [a for u in SERVICES for a in ("-u", u)]
+            units = [a for u in (*SERVICES, "usb-over-ip-update") for a in ("-u", u)]
             return self.reply(200, run("journalctl", *units, "-n", "300", "--no-pager", "-o", "short-iso")[1], "text/plain")
         self.reply(404, {"error": "introuvable"})
 
@@ -383,6 +385,21 @@ class Handler(BaseHTTPRequestHandler):
             os.chmod(f"{ETC}/password", 0o600)
             AUTH_OK.clear()
             return {"ok": True}
+        if path == "/api/update":
+            ver = data.get("version")
+            if not isinstance(ver, str) or not re.fullmatch(r"\d+\.\d+\.\d+", ver):
+                raise ValueError(f"version invalide : {ver!r}")
+            # ponytail: trusts HTTPS + GitHub, no package signature; sign the .deb if the threat model grows
+            url = f"https://github.com/{REPO}/releases/download/v{ver}/usb-over-ip_{ver}_all.deb"
+            with urllib.request.urlopen(url, timeout=30) as r:
+                deb = r.read()
+            write_to = f"/var/tmp/usb-over-ip_{ver}_all.deb"
+            with open(write_to, "wb") as f:
+                f.write(deb)
+            # postinst restarts this web service: apt must run outside its cgroup or systemd kills it mid-install
+            rc, out = run("systemd-run", "--unit=usb-over-ip-update", "--collect", "--setenv=DEBIAN_FRONTEND=noninteractive",
+                          "sh", "-c", f"apt-get install -y {write_to}; rm -f {write_to}")
+            return {"ok": rc == 0, "output": out}
         if path == "/api/reboot":
             return {"ok": True}
         raise ValueError("action inconnue")

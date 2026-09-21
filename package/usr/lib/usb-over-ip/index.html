@@ -48,6 +48,16 @@ const esc = v => String(v ?? "").replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};
 const fmtLabel = f => f[1] + f[0].toUpperCase() + f[2];  // "n81" -> "8N1"
 let S = null, serialDraft = null, busy = false;
 
+// Latest release, checked once per page load from the browser; the Pi downloads it only on request.
+let latest = null, updating = null;
+fetch("https://api.github.com/repos/Exe64/USBerryPi/releases/latest").then(r => r.ok && r.json())
+  .then(j => { if (j) latest = { v: j.tag_name.replace(/^v/, ""), url: j.html_url }; }).catch(() => {});
+const newer = (a, b) => {  // "1.0.10" > "1.0.9"; unstamped source ("@VERSION@") is never offered an update
+  const x = a.split(".").map(Number), y = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i];
+  return false;
+};
+
 // Theme follows the system until the user picks one with the header button.
 function setTheme(t, save) {
   document.documentElement.dataset.theme = t;
@@ -131,6 +141,10 @@ function render() {
       <div><div class="muted">Uptime</div>${uptime(s.uptime)}</div>
       <div><div class="muted">Charge / Temp.</div>${s.load}${s.temp != null ? ` · ${s.temp} °C` : ""}</div>
       <div><div class="muted">Mémoire</div>${mem}</div>
+      <div><div class="muted">Version</div><div class="row">${esc(S.version)}
+        ${updating ? `<span class="pill warn">mise à jour vers ${esc(updating)}…</span>`
+          : latest && newer(latest.v, S.version) ? `<button class="primary" id="update">Mettre à jour vers ${esc(latest.v)}</button>
+            <a href="${esc(latest.url)}" target="_blank" rel="noopener">nouveautés</a>` : ""}</div></div>
       <div><div class="muted">Module usbip_host</div>${s.usbip_module ? svc("active") : svc("absent")}</div>
       <div><div class="muted">Serveur USB/IP (tcp/3240)</div><div class="row">${svc(s.services["usb-over-ip"])} <button data-svc="usb-over-ip">Redémarrer</button></div></div>
       <div><div class="muted">ser2net</div><div class="row">${svc(s.services.ser2net)} <button data-svc="ser2net">Redémarrer</button></div></div>
@@ -231,6 +245,14 @@ document.addEventListener("click", async e => {
       catch (err) { toast(err.message, true); }
       return;
     }
+    case "update": {
+      if (!confirm(`Installer la version ${latest.v} ? Les services redémarrent : les clients USB/IP et ser2net sont déconnectés.`)) return;
+      try { await api("/api/update", { version: latest.v }); updating = latest.v; toast("Mise à jour en cours…"); render(); }
+      catch (err) { toast(err.message, true); return; }
+      // apt failed if the new version never shows up: stop waiting and point to the logs
+      setTimeout(() => { if (updating) { updating = null; toast("La mise à jour n'a pas abouti : voir les journaux", true); render(); } }, 300000);
+      return;
+    }
     case "logs-btn": { const pre = $("#logs"); if (!(pre.hidden = !pre.hidden)) return refresh(); pre.textContent = await api("/api/logs"); pre.scrollTop = pre.scrollHeight; return; }
     case "reboot": if (confirm("Redémarrer le système ?")) act("/api/reboot", {}, "Redémarrage…"); return;
   }
@@ -253,8 +275,9 @@ async function refresh() {
   if (S && (S.setup || document.querySelector(":popover-open") || serialDraft || (a && a.matches("input, textarea, select")) || !$("#logs")?.hidden)) return;
   try {
     S = await api("/api/state");
+    if (updating && S.version === updating) return location.reload();
     S.setup ? renderSetup() : render();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) { if (!updating) toast(e.message, true); }  // the web service restarts during an update
 }
 refresh();
 setInterval(refresh, 5000);

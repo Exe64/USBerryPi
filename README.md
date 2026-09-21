@@ -79,6 +79,8 @@ Services: `usb-over-ip` (usbipd), `usb-over-ip-web`, `ser2net`.
 
 The UI runs as root, protected by an HTTP Basic password without TLS. It is meant for a trusted local network: do not expose it to the Internet. Until a password is set, the first visitor gets to choose it. USB/IP itself has no authentication at all.
 
+When a newer release exists, the UI offers to install it: the Pi downloads the `.deb` from this repository's GitHub releases over HTTPS and installs it as root (no package signature beyond that). The Pi needs Internet access for it; the services restart, which disconnects USB/IP and ser2net clients.
+
 ## Development
 
 ```sh
