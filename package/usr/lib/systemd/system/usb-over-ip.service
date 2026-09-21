@@ -5,7 +5,8 @@ Wants=network-online.target
 
 [Service]
 ExecStartPre=/usr/sbin/modprobe usbip_host
-ExecStart=/usr/sbin/usbipd
+# No path: Debian ships usbipd in /usr/sbin, Ubuntu (linux-tools) in /usr/bin
+ExecStart=usbipd
 # Devices already plugged in at startup; later ones go through the udev rule
 ExecStartPost=/usr/lib/usb-over-ip/uoip.py autobind
 Restart=always

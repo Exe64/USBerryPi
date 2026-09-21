@@ -1,18 +1,19 @@
 #!/usr/bin/python3
 """usb-over-ip: USB/IP autobind, ser2net generation and web UI.
 
-Stdlib only, so it runs as-is from Pi 1 (ARMv6) to Pi 5.
+Stdlib only, so it runs as-is on any Debian-based machine, from a Pi 1 (ARMv6) to an x86 mini PC.
   uoip.py autobind [BUSID...]   share devices (all of them if no busid)
   uoip.py unbind-all            stop sharing every device
   uoip.py init                  create/migrate the configuration (postinst)
   uoip.py serve [PORT]          web UI (port 80 by default)
 """
-import base64, glob, hashlib, hmac, json, os, re, secrets, socket, subprocess, sys, threading, time, urllib.request
+import base64, glob, hashlib, hmac, json, os, re, secrets, socket, stat, subprocess, sys, threading, time, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 VERSION = "@VERSION@"  # stamped by make deb
 REPO = "Exe64/USBerryPi"  # GitHub releases the update button installs from
 SYS = "/sys"
+PROC = "/proc"
 ETC = "/etc/usb-over-ip"
 HERE = os.path.dirname(os.path.abspath(__file__))
 USBIP_PORT = 3240
@@ -156,10 +157,43 @@ def devices():
     return [device(b) for b in sorted(busids, key=lambda b: [int(x) for x in re.split(r"[-.]", b)])]
 
 
+def block_holders(node):
+    """Physical sysfs paths behind a block device: device-mapper, LVM and md volumes sit on their slaves."""
+    real = os.path.realpath(node)
+    slaves = glob.glob(f"{real}/slaves/*")
+    return [p for s in slaves for p in block_holders(s)] if slaves else [real]
+
+
+def in_use():
+    """sysfs paths of what this machine runs on: network interfaces, mounted filesystems, swap.
+    Sharing the USB device behind one of them would cut the network or pull the disk from under the system."""
+    paths = [os.path.realpath(f"{n}/device") for n in glob.glob(f"{SYS}/class/net/*") if os.path.exists(f"{n}/device")]
+    sources = [l.split()[:2] for l in read(f"{PROC}/mounts").splitlines()]
+    sources += [[l.split()[0], ""] for l in read(f"{PROC}/swaps").splitlines()[1:]]
+    for src, target in sources:
+        if not src.startswith("/dev/"):
+            continue  # virtual or network filesystem (stat on a dead NFS mount would hang)
+        try:
+            st = os.stat(src)
+            dev = st.st_rdev if stat.S_ISBLK(st.st_mode) else None
+        except OSError:
+            dev = None
+        if dev is None:
+            try:
+                dev = os.stat(target).st_dev  # /dev/root has no device node on some systems
+            except OSError:
+                continue
+        paths += block_holders(f"{SYS}/dev/block/{os.major(dev)}:{os.minor(dev)}")
+    return paths
+
+
 def blocked(dev, exclude, serial):
     """Why this device must not be shared ('' if it can be)."""
     if dev["hub"]:
         return "hub"
+    here = os.path.realpath(f"{SYS}/bus/usb/devices/{dev['busid']}") + "/"
+    if any((p + "/").startswith(here) for p in in_use()):
+        return "système"
     keys = {f"{dev['vid']}:{dev['pid']}".lower(), dev["ident"]}
     if keys & set(exclude):
         return "exclu"
@@ -169,6 +203,10 @@ def blocked(dev, exclude, serial):
 
 
 def autobind(busids=None):
+    # From udev (busids given), leave it to the service until it runs: at boot udev replays "add" events before
+    # fstab mounts and network interfaces exist, so a system disk or NIC would still look free.
+    if busids and run("systemctl", "is-active", "--quiet", "usb-over-ip")[0] != 0:
+        return print("usb-over-ip inactif : partage fait au démarrage du service")
     exclude, serial = load_exclude(), load_serial()
     for dev in devices():
         if (busids is None or dev["busid"] in busids) and not dev["bound"] and not blocked(dev, exclude, serial):
@@ -205,7 +243,8 @@ def system():
     temp = read("/sys/class/thermal/thermal_zone0/temp")
     active = subprocess.run(["systemctl", "is-active", *SERVICES], capture_output=True, text=True).stdout.split()
     return {
-        "hostname": socket.gethostname(), "model": read("/proc/device-tree/model").rstrip("\x00"),
+        "hostname": socket.gethostname(), "model": read("/proc/device-tree/model").rstrip("\x00")
+                 or " ".join(read(f"/sys/class/dmi/id/{k}") for k in ("sys_vendor", "product_name")).strip(),
         "kernel": os.uname().release, "uptime": int(float(read("/proc/uptime", "0").split()[0])),
         "load": round(os.getloadavg()[0], 2), "temp": round(int(temp) / 1000, 1) if temp.isdigit() else None,
         "mem_total": mem.get("MemTotal"), "mem_available": mem.get("MemAvailable"),
@@ -344,6 +383,8 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError(f"périphérique inconnu : {busid!r}")
             dev = device(busid)
             if act == "bind":
+                if blocked(dev, load_exclude(), load_serial()):
+                    raise ValueError(f"{busid} ne peut pas être partagé ({blocked(dev, load_exclude(), load_serial())})")
                 rc, out = run("usbip", "bind", "-b", busid)
             elif act == "unbind":
                 rc, out = run("usbip", "unbind", "-b", busid)

@@ -24,7 +24,7 @@ def mkdev(root, busid, vid, pid, serial="", cls="00", tty=None):
 class Test(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        uoip.SYS, uoip.ETC = f"{self.tmp.name}/sys", f"{self.tmp.name}/etc"
+        uoip.SYS, uoip.ETC, uoip.PROC = f"{self.tmp.name}/sys", f"{self.tmp.name}/etc", f"{self.tmp.name}/proc"
         mkdev(uoip.SYS, "1-1", "0424", "9514", cls="09")
         mkdev(uoip.SYS, "1-1.1", "0424", "ec00")
         mkdev(uoip.SYS, "1-1.2", "10c4", "EA60", serial="ABC", tty="ttyUSB0")
@@ -43,6 +43,22 @@ class Test(unittest.TestCase):
         self.assertEqual(list(self.blocked()), ["1-1", "1-1.1", "1-1.2", "1-1.10"])  # numeric sort, usb1 skipped
         self.assertEqual(self.blocked(), {"1-1": "hub", "1-1.1": "exclu", "1-1.2": "", "1-1.10": ""})
         self.assertEqual(uoip.device("1-1.2")["ttys"], ["ttyUSB0"])
+
+    def test_system_devices_are_never_shared(self):
+        # 1-1.2 holds the root filesystem, mounted from a source without device node (like /dev/root);
+        # 1-1.10 provides a network interface. 1-1.1 must not match 1-1.10's paths.
+        root = os.stat(self.tmp.name).st_dev
+        disk = f"{uoip.SYS}/devices/1-1.2/1-1.2:1.0/host0/block/sda/sda2"
+        os.makedirs(disk)
+        os.makedirs(f"{uoip.SYS}/dev/block")
+        os.symlink(disk, f"{uoip.SYS}/dev/block/{os.major(root)}:{os.minor(root)}")
+        os.makedirs(f"{uoip.SYS}/class/net/eth1")
+        os.makedirs(f"{uoip.SYS}/devices/1-1.10/1-1.10:1.0")  # a netdev hangs off the USB interface
+        os.symlink(f"{uoip.SYS}/devices/1-1.10/1-1.10:1.0", f"{uoip.SYS}/class/net/eth1/device")
+        os.makedirs(uoip.PROC)
+        with open(f"{uoip.PROC}/mounts", "w") as f:
+            f.write(f"/dev/usberrypi-test-root {self.tmp.name} ext4 rw 0 0\nproc /proc proc rw 0 0\n")
+        self.assertEqual(self.blocked(), {"1-1": "hub", "1-1.1": "exclu", "1-1.2": "système", "1-1.10": "système"})
 
     def test_serial_blocks_its_usb_device(self):
         uoip.save_serial([{"name": "zigbee", "tty": "/dev/ttyUSB0", "port": 6638, "baud": 115200, "format": "n81"}])

@@ -2,15 +2,15 @@
 
 ![USBerryPi](docs/banner.jpg)
 
-Turns a Raspberry Pi (Pi 1 to Pi 5) into a network USB device server:
+Turns a Raspberry Pi (Pi 1 to Pi 5), or any Debian or Ubuntu machine, into a network USB device server:
 
-- **USB/IP** (tcp/3240): every plugged-in device is shared automatically, except hubs and exclusions.
+- **USB/IP** (tcp/3240): every plugged-in device is shared automatically, except hubs, exclusions, and what the machine itself runs on: mounted disks, swap and network interfaces (shown as `système`), so a USB boot disk or USB Ethernet adapter is never pulled away.
 - **ser2net**: selected serial ports (Zigbee dongle, TIC module…) are exposed over TCP and never shared over USB/IP.
-- **Web UI** (port 80): devices, connected clients, ser2net, exclusions, services, logs, reboot.
+- **Web UI** (port 80): devices with the client-side commands to attach them, connected clients, ser2net, exclusions, services, logs, reboot, one-click updates.
 
 ## Installation
 
-### Option 1: ready-to-flash image
+### Option 1: ready-to-flash image (Raspberry Pi)
 
 From the [releases](../../releases):
 
@@ -31,11 +31,18 @@ Both images then show up in the OS list, customisation included, and Imager down
 
 Then open http://usbip.local (or the Pi's IP). On first access, the UI asks you to choose a password.
 
-### Option 2: package on an existing Raspberry Pi OS
+### Option 2: package on an existing system
+
+Raspberry Pi OS, Debian 12+ or Ubuntu 22.04+, any architecture: Raspberry Pi, x86 mini PC or thin client, other ARM board, VM with USB passthrough.
 
 ```sh
+sudo modprobe usbip_host        # the kernel must provide USB/IP
 sudo apt install ./usb-over-ip_<version>_all.deb
 ```
+
+Debian and Raspberry Pi OS kernels include USB/IP. On Ubuntu the module is in `linux-modules-extra`, which comes with the standard `linux-image-generic` kernel but not with the `virtual` kernel of cloud and minimal images (`sudo apt install linux-modules-extra-$(uname -r)`); the `usbip` tools come from `linux-tools-generic`, pulled in by the package. Vendor kernels (Armbian…) sometimes leave USB/IP out: if `modprobe usbip_host` fails, the board can't be used as a server.
+
+Then open http://<hostname>.local (or the machine's IP). On first access, the UI asks you to choose a password.
 
 Installations made with the legacy `install_server` / `install_ser2net` scripts are migrated automatically: exclusion list, ser2net ports, and replacement of the old `usbipd` service.
 
@@ -63,7 +70,7 @@ usbip detach -p 1               :: port number printed by attach
 
 For ser2net, e.g. in Home Assistant: `socket://usbip.local:6638`.
 
-## Files on the Pi
+## Files
 
 | Path | Purpose |
 |---|---|
@@ -79,7 +86,7 @@ Services: `usb-over-ip` (usbipd), `usb-over-ip-web`, `ser2net`.
 
 The UI runs as root, protected by an HTTP Basic password without TLS. It is meant for a trusted local network: do not expose it to the Internet. Until a password is set, the first visitor gets to choose it. USB/IP itself has no authentication at all.
 
-When a newer release exists, the UI offers to install it: the Pi downloads the `.deb` from this repository's GitHub releases over HTTPS and installs it as root (no package signature beyond that). The Pi needs Internet access for it; the services restart, which disconnects USB/IP and ser2net clients.
+When a newer release exists, the UI offers to install it: the machine downloads the `.deb` from this repository's GitHub releases over HTTPS and installs it as root (no package signature beyond that). It needs Internet access for it; the services restart, which disconnects USB/IP and ser2net clients.
 
 ## Development
 

@@ -96,6 +96,7 @@ function status(d) {
   if (d.used) return `<span class="pill warn">utilisé par un client</span>`;
   if (d.bound) return `<span class="pill ok">partagé</span>`;
   if (d.blocked === "hub") return `<span class="pill off">hub</span>`;
+  if (d.blocked === "système") return `<span class="pill off" title="Disque monté, swap ou interface réseau de cette machine : le partager la couperait">système</span>`;
   if (d.blocked === "exclu") return `<span class="pill off">exclu</span>`;
   if (d.blocked === "ser2net") return `<span class="pill ok">ser2net</span>`;
   return `<span class="pill off">local</span>`;
@@ -188,7 +189,7 @@ function render() {
 
   <section>
     <h2>Exclusions USB/IP <span class="sp"></span><button class="primary" id="exclude-save">Enregistrer</button></h2>
-    <p class="muted">Un <span class="mono">vid:pid</span> ou <span class="mono">vid:pid:numéro_de_série</span> par ligne. Par défaut : Ethernet USB des Pi 1/2/3 (le partager coupe le réseau).</p>
+    <p class="muted">Un <span class="mono">vid:pid</span> ou <span class="mono">vid:pid:numéro_de_série</span> par ligne. Par défaut : Ethernet USB des Pi 1/2/3. Les disques montés, le swap et les interfaces réseau de cette machine ne sont jamais partagés (état « système »).</p>
     <textarea id="exclude" rows="5" class="mono" style="width:100%;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:8px">${esc(S.exclude.join("\n"))}</textarea>
   </section>
 
